@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main # Run when code is pushed to main branch
+      - master # Run when code is pushed to master branch  
   workflow_dispatch: # Allow manual trigger from GitHub Actions tab
 
 # Environment variables (using GitHub Secrets for security)
