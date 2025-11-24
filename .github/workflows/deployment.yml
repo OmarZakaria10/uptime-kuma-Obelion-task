@@ -1,0 +1,86 @@
+name: Deploy Uptime Kuma to DigitalOcean
+
+# When to run this workflow
+on:
+  push:
+    branches:
+      - main # Run when code is pushed to main branch
+  workflow_dispatch: # Allow manual trigger from GitHub Actions tab
+
+# Environment variables (using GitHub Secrets for security)
+env:
+  FRONTEND_HOST: ${{ secrets.FRONTEND_HOST }}
+  SSH_USER: root
+
+# Simple deployment job
+jobs:
+  build:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    steps:
+    - name: Print a message
+      run: echo " building….."  
+  deploy:
+    name: Deploy to Frontend Server
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Get the latest code
+      - name:  Checkout Code
+        uses: actions/checkout@v4
+
+      # Step 2: Setup SSH connection to DigitalOcean server
+      - name:  Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ env.FRONTEND_HOST }} >> ~/.ssh/known_hosts
+
+      # Step 3: Copy docker-compose.yml to the server
+      - name:  Copy Docker Compose File
+        run: |
+          scp -i ~/.ssh/deploy_key \
+            compose.yaml \
+            ${{ env.SSH_USER }}@${{ env.FRONTEND_HOST }}:/opt/uptime-kuma/docker-compose.yml
+
+      # Step 4: Update Uptime Kuma on the server
+      - name:  Deploy Uptime Kuma
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ env.SSH_USER }}@${{ env.FRONTEND_HOST }} << 'ENDSSH'
+            set -e
+            
+            echo " Updating Uptime Kuma..."
+            cd /opt/uptime-kuma
+            
+            # Pull latest Uptime Kuma image
+            docker compose pull
+            
+            # Restart with new configuration
+            docker compose up -d --force-recreate
+            
+            # Wait a bit for container to start
+            sleep 5
+            
+            # Show status
+            echo " Container Status:"
+            docker compose ps
+            
+            echo " Deployment completed!"
+          ENDSSH
+
+      # Step 5: Verify deployment worked
+      - name:  Verify Deployment
+        run: |
+          echo "Waiting for service to be ready..."
+          sleep 10
+
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://${{ env.FRONTEND_HOST }} || echo "000")
+
+          if [ "$STATUS" -eq 200 ] || [ "$STATUS" -eq 302 ]; then
+            echo " Uptime Kuma is responding!"
+            echo " Access it at: http://${{ env.FRONTEND_HOST }}"
+          else
+            echo "  Service returned status: $STATUS"
+            echo "Check logs with: ssh ${{ env.SSH_USER }}@${{ env.FRONTEND_HOST }} 'docker compose -f /opt/uptime-kuma/docker-compose.yml logs'"
+          fi
